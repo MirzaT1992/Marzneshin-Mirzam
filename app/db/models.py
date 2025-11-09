@@ -520,3 +520,4 @@ class Settings(Base):
     id = Column(Integer, primary_key=True, server_default=text("0"))
     subscription = Column(JSON, nullable=False)
     telegram = Column(JSON)
+    backup = Column(JSON)

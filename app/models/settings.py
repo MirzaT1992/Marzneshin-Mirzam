@@ -1,7 +1,8 @@
+from datetime import datetime
 from enum import StrEnum
-from typing import Pattern
+from typing import Pattern, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ConfigTypes(StrEnum):
@@ -37,6 +38,34 @@ class TelegramSettings(BaseModel):
     channel_id: int | None
 
 
+class RemoteBackupSettings(BaseModel):
+    provider: Literal["s3", "ftp", "sftp"] = "s3"
+    endpoint: str | None = None
+    access_key: str | None = None
+    secret_key: str | None = None
+    bucket: str | None = None
+    path: str = "marzneshin-backups"
+
+
+class BackupSettings(BaseModel):
+    enabled: bool = True
+    interval_hours: int = Field(default=6, ge=1, le=168)  # 1 hour to 1 week
+    retention_days: int = Field(default=7, ge=1, le=90)
+    backup_location: str = "/var/lib/marzneshin/backups"
+    include_database: bool = True
+    include_logs: bool = False
+    remote_backup: RemoteBackupSettings | None = None
+
+
+class BackupInfo(BaseModel):
+    filename: str
+    created_at: datetime
+    size_bytes: int
+    location: str
+    is_remote: bool = False
+
+
 class Settings(BaseModel):
     subscription: SubscriptionSettings
     telegram: TelegramSettings | None
+    backup: BackupSettings = Field(default_factory=BackupSettings)

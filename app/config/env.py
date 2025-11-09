@@ -119,3 +119,6 @@ TASKS_EXPIRE_DAYS_REACHED_INTERVAL = config(
 TASKS_RESET_USER_DATA_USAGE = config(
     "TASKS_RESET_USER_DATA_USAGE", default=3600, cast=int
 )
+TASKS_AUTO_BACKUP_INTERVAL = config(
+    "TASKS_AUTO_BACKUP_INTERVAL", default=21600, cast=int  # 6 hours default
+)

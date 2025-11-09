@@ -26,6 +26,7 @@ from app.config.env import (
     TASKS_REVIEW_USERS_INTERVAL,
     TASKS_EXPIRE_DAYS_REACHED_INTERVAL,
     TASKS_RESET_USER_DATA_USAGE,
+    TASKS_AUTO_BACKUP_INTERVAL,
 )
 from app.templates import render_template
 from . import __version__
@@ -37,6 +38,7 @@ from .tasks import (
     review_users,
     expire_days_reached,
 )
+from .tasks.backup import create_auto_backup
 from .webhooks import webhooks_router
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,13 @@ scheduler.add_job(
     "interval",
     seconds=TASKS_RESET_USER_DATA_USAGE,
     coalesce=True,
+)
+scheduler.add_job(
+    create_auto_backup,
+    "interval",
+    seconds=TASKS_AUTO_BACKUP_INTERVAL,
+    coalesce=True,
+    max_instances=1,
 )
 
 
