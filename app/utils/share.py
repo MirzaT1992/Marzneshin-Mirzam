@@ -9,6 +9,7 @@ from importlib import resources
 from typing import Literal, Union, List, Type
 from uuid import UUID
 
+import yaml
 from jdatetime import date as jd
 from v2share import (
     V2Data,
@@ -99,6 +100,7 @@ def generate_subscription(
     placeholder_remark: str = "disabled",
     shuffle: bool = False,
     include_cdn_configs: bool = False,
+    apply_routing_rules: bool = False,
 ) -> str:
     extra_data = UserResponse.model_validate(user).model_dump(
         exclude={"subscription_url", "services", "inbounds"}
@@ -141,6 +143,10 @@ def generate_subscription(
 
     subscription_handler.add_proxies(configs)
     config = subscription_handler.render(sort=True, shuffle=shuffle)
+
+    # Apply smart proxy routing rules if enabled
+    if apply_routing_rules and config_format in ["clash", "clash-meta", "xray", "sing-box"]:
+        config = apply_smart_proxy_routing(config, config_format)
 
     return (
         config if not as_base64 else base64.b64encode(config.encode()).decode()
@@ -431,6 +437,115 @@ def create_config(
 
 def encode_title(text: str) -> str:
     return f"base64:{base64.b64encode(text.encode()).decode()}"
+
+
+def apply_smart_proxy_routing(config: str, config_format: str) -> str:
+    """
+    Apply smart proxy routing rules to subscription config
+    """
+    try:
+        from app.db import GetDB
+        from app.db.models import Settings
+        from app.models.settings import SubscriptionSettings
+        from app.models.proxy_mode import ProxyModeSettings
+        from app.utils.routing import generate_clash_rules, generate_xray_routing, generate_singbox_routing
+        import yaml
+
+        # Get settings from database
+        with GetDB() as db:
+            settings_row = db.query(Settings.subscription, Settings.proxy_mode).first()
+            if not settings_row:
+                return config
+
+            sub_settings = SubscriptionSettings.model_validate(settings_row[0])
+            proxy_mode_settings_data = settings_row[1]
+
+            # Check if proxy mode is enabled
+            if not sub_settings.proxy_mode_enabled:
+                return config
+
+            # Get proxy mode settings
+            if not proxy_mode_settings_data:
+                proxy_mode_settings = ProxyModeSettings()
+            else:
+                proxy_mode_settings = ProxyModeSettings.model_validate(proxy_mode_settings_data)
+
+        proxy_mode = sub_settings.default_proxy_mode
+
+        # Apply routing based on format
+        if config_format in ["clash", "clash-meta"]:
+            # Parse YAML
+            config_dict = yaml.safe_load(config)
+
+            # Add routing rules
+            clash_rules = generate_clash_rules(proxy_mode, proxy_mode_settings)
+            config_dict["rules"] = clash_rules
+
+            # Convert back to YAML
+            return yaml.dump(config_dict, allow_unicode=True, default_flow_style=False)
+
+        elif config_format == "xray":
+            # Parse JSON
+            config_dict = json.loads(config)
+
+            # Add routing
+            routing = generate_xray_routing(proxy_mode, proxy_mode_settings)
+            config_dict["routing"] = routing
+
+            # Add direct and block outbounds if needed
+            if "outbounds" not in config_dict:
+                config_dict["outbounds"] = []
+
+            outbound_tags = [o.get("tag") for o in config_dict["outbounds"]]
+            if "direct" not in outbound_tags:
+                config_dict["outbounds"].append({
+                    "protocol": "freedom",
+                    "tag": "direct"
+                })
+            if "block" not in outbound_tags:
+                config_dict["outbounds"].append({
+                    "protocol": "blackhole",
+                    "tag": "block"
+                })
+
+            # Convert back to JSON
+            return json.dumps(config_dict, indent=2)
+
+        elif config_format == "sing-box":
+            # Parse JSON
+            config_dict = json.loads(config)
+
+            # Add routing
+            routing = generate_singbox_routing(proxy_mode, proxy_mode_settings)
+            config_dict["route"] = routing
+
+            # Add direct and block outbounds if needed
+            if "outbounds" not in config_dict:
+                config_dict["outbounds"] = []
+
+            outbound_tags = [o.get("tag") for o in config_dict["outbounds"]]
+            if "direct" not in outbound_tags:
+                config_dict["outbounds"].append({
+                    "type": "direct",
+                    "tag": "direct"
+                })
+            if "block" not in outbound_tags:
+                config_dict["outbounds"].append({
+                    "type": "block",
+                    "tag": "block"
+                })
+
+            # Convert back to JSON
+            return json.dumps(config_dict, indent=2)
+
+    except Exception as e:
+        # Log error but don't fail subscription generation
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to apply smart proxy routing: {e}")
+        return config
+
+    return config
 
 
 def generate_cdn_configs(original_configs: list, user_id: int) -> list:

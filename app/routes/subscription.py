@@ -113,6 +113,7 @@ def user_subscription(
                 placeholder_remark=subscription_settings.placeholder_remark,
                 shuffle=subscription_settings.shuffle_configs,
                 include_cdn_configs=True,  # Enable CDN configs
+                apply_routing_rules=True,  # Enable smart proxy routing
             )
             return Response(
                 content=conf,
@@ -190,6 +191,7 @@ def user_subscription_with_client_type(
         placeholder_remark=subscription_settings.placeholder_remark,
         shuffle=subscription_settings.shuffle_configs,
         include_cdn_configs=True,  # Enable CDN configs
+        apply_routing_rules=True,  # Enable smart proxy routing
     )
     return Response(
         content=conf,

@@ -4,6 +4,8 @@ from typing import Pattern, Literal
 
 from pydantic import BaseModel, Field
 
+from app.models.proxy_mode import ProxyMode, ProxyModeSettings
+
 
 class ConfigTypes(StrEnum):
     links = "links"
@@ -30,6 +32,8 @@ class SubscriptionSettings(BaseModel):
     placeholder_if_disabled: bool = True
     placeholder_remark: str = "disabled"
     rules: list[SubscriptionRule]
+    proxy_mode_enabled: bool = False  # Enable smart proxy mode
+    default_proxy_mode: ProxyMode = ProxyMode.FULL  # Default mode for subscriptions
 
 
 class TelegramSettings(BaseModel):
@@ -95,3 +99,4 @@ class Settings(BaseModel):
     telegram: TelegramSettings | None
     backup: BackupSettings = Field(default_factory=BackupSettings)
     cloudflare: CloudflareSettings = Field(default_factory=CloudflareSettings)
+    proxy_mode: ProxyModeSettings = Field(default_factory=ProxyModeSettings)

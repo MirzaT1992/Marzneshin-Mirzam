@@ -20,6 +20,7 @@ from app.models.settings import (
     CloudflareSettings,
     CloudflareIPInfo,
 )
+from app.models.proxy_mode import ProxyModeSettings
 from app.models.system import (
     UsersStats,
     NodesStats,
@@ -339,3 +340,25 @@ async def get_available_cdn_ips(admin: SudoAdminDep = None):
     """Get list of available Cloudflare CDN IP addresses"""
     cdn_ips = await get_cloudflare_cdn_ips()
     return {"cdn_ips": cdn_ips}
+
+
+# Smart Proxy Mode Management Endpoints
+
+@router.get("/settings/proxy-mode", response_model=ProxyModeSettings)
+def get_proxy_mode_settings(db: DBDep, admin: SudoAdminDep):
+    """Get current Smart Proxy Mode settings"""
+    settings_row = db.query(Settings.proxy_mode).first()
+    if not settings_row or not settings_row[0]:
+        return ProxyModeSettings()
+    return ProxyModeSettings.model_validate(settings_row[0])
+
+
+@router.put("/settings/proxy-mode", response_model=ProxyModeSettings)
+def update_proxy_mode_settings(
+    db: DBDep, modifications: ProxyModeSettings, admin: SudoAdminDep
+):
+    """Update Smart Proxy Mode settings"""
+    settings = db.query(Settings).first()
+    settings.proxy_mode = modifications.model_dump(mode="json")
+    db.commit()
+    return settings.proxy_mode
