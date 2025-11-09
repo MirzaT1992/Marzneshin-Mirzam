@@ -483,6 +483,7 @@ class Node(Base):
     usage_coefficient = Column(
         Float, nullable=False, server_default=text("1.0"), default=1
     )
+    warp_config = Column(JSON)  # WARP configuration
 
     @property
     def inbound_ids(self):
