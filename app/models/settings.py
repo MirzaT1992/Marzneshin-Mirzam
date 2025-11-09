@@ -65,7 +65,33 @@ class BackupInfo(BaseModel):
     is_remote: bool = False
 
 
+class CloudflareDomain(BaseModel):
+    domain: str
+    zone_id: str
+    enabled: bool = True
+
+
+class CloudflareSettings(BaseModel):
+    enabled: bool = False
+    api_token: str | None = None
+    email: str | None = None
+    default_zone_id: str | None = None
+    domains: list[CloudflareDomain] = []
+    auto_cdn_ip: bool = True
+    cdn_ports: list[int] = Field(
+        default=[80, 443, 8080, 8443, 2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096]
+    )
+    preferred_ips: list[str] = []  # User can manually add preferred CDN IPs
+
+
+class CloudflareIPInfo(BaseModel):
+    ip: str
+    latency_ms: float | None = None
+    location: str | None = None
+
+
 class Settings(BaseModel):
     subscription: SubscriptionSettings
     telegram: TelegramSettings | None
     backup: BackupSettings = Field(default_factory=BackupSettings)
+    cloudflare: CloudflareSettings = Field(default_factory=CloudflareSettings)

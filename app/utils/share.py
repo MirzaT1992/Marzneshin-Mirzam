@@ -98,6 +98,7 @@ def generate_subscription(
     use_placeholder: bool = False,
     placeholder_remark: str = "disabled",
     shuffle: bool = False,
+    include_cdn_configs: bool = False,
 ) -> str:
     extra_data = UserResponse.model_validate(user).model_dump(
         exclude={"subscription_url", "services", "inbounds"}
@@ -132,6 +133,11 @@ def generate_subscription(
             format_variables,
             chaining_support=subscription_handler.chaining_support,
         )
+
+        # Add CDN configs if enabled
+        if include_cdn_configs:
+            cdn_configs = generate_cdn_configs(configs, user.id)
+            configs.extend(cdn_configs)
 
     subscription_handler.add_proxies(configs)
     config = subscription_handler.render(sort=True, shuffle=shuffle)
@@ -425,3 +431,78 @@ def create_config(
 
 def encode_title(text: str) -> str:
     return f"base64:{base64.b64encode(text.encode()).decode()}"
+
+
+def generate_cdn_configs(original_configs: list, user_id: int) -> list:
+    """
+    Generate CDN-optimized configurations from original configs
+    Only generates CDN configs for WebSocket-based protocols
+    """
+    from app.db import GetDB
+    from app.db.models import Settings
+    from app.models.settings import CloudflareSettings
+
+    cdn_configs = []
+
+    try:
+        # Get Cloudflare settings from database
+        with GetDB() as db:
+            settings_row = db.query(Settings.cloudflare).first()
+            if not settings_row or not settings_row[0]:
+                return cdn_configs
+
+            cf_settings = CloudflareSettings.model_validate(settings_row[0])
+
+        # Check if CDN is enabled
+        if not cf_settings.enabled or not cf_settings.auto_cdn_ip:
+            return cdn_configs
+
+        # Get CDN IPs
+        cdn_ips = cf_settings.preferred_ips[:5] if cf_settings.preferred_ips else []
+        cdn_ports = cf_settings.cdn_ports[:6]  # Use first 6 CDN-compatible ports
+
+        if not cdn_ips:
+            # Use default Cloudflare CDN IPs if no preferred IPs configured
+            cdn_ips = [
+                "104.16.0.0",
+                "104.17.0.0",
+                "172.67.0.0",
+            ]
+
+        # Generate CDN configs for WebSocket-based protocols
+        for config in original_configs:
+            transport_type = getattr(config, "transport_type", None)
+
+            # Only create CDN configs for WebSocket-based transports
+            if transport_type in ["ws", "httpupgrade", "splithttp"]:
+                for cdn_ip in cdn_ips[:2]:  # Use top 2 CDN IPs
+                    for port in cdn_ports[:3]:  # Use top 3 ports
+                        # Create a copy of the config
+                        cdn_config = V2Data(
+                            config.protocol,
+                            f"{config.remark} [CDN]",
+                            cdn_ip,
+                            port,
+                            transport_type=transport_type,
+                            sni=config.sni,
+                            host=config.host,
+                            tls=config.tls or "tls",  # Ensure TLS for CDN
+                            header_type=config.header_type,
+                            alpn=config.alpn,
+                            path=config.path,
+                            fingerprint=config.fingerprint,
+                            uuid=config.uuid,
+                            password=config.password,
+                            flow=config.flow,
+                            allow_insecure=config.allow_insecure,
+                        )
+
+                        cdn_configs.append(cdn_config)
+
+    except Exception as e:
+        # Log error but don't fail subscription generation
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to generate CDN configs: {e}")
+
+    return cdn_configs

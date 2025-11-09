@@ -17,6 +17,8 @@ from app.models.settings import (
     TelegramSettings,
     BackupSettings,
     BackupInfo,
+    CloudflareSettings,
+    CloudflareIPInfo,
 )
 from app.models.system import (
     UsersStats,
@@ -26,6 +28,11 @@ from app.models.system import (
 )
 from app.models.user import UserExpireStrategy
 from app.utils.backup import BackupManager
+from app.utils.cloudflare import (
+    CloudflareAPI,
+    get_optimal_cdn_ips,
+    get_cloudflare_cdn_ips,
+)
 
 router = APIRouter(tags=["System"], prefix="/system")
 
@@ -217,3 +224,118 @@ async def cleanup_old_backups(db: DBDep, admin: SudoAdminDep):
     await backup_manager.cleanup_old_backups()
 
     return {"message": "Old backups cleaned up successfully"}
+
+
+# Cloudflare/CDN Management Endpoints
+
+@router.get("/settings/cloudflare", response_model=CloudflareSettings)
+def get_cloudflare_settings(db: DBDep, admin: SudoAdminDep):
+    """Get current Cloudflare/CDN settings"""
+    settings_row = db.query(Settings.cloudflare).first()
+    if not settings_row or not settings_row[0]:
+        return CloudflareSettings()
+    return CloudflareSettings.model_validate(settings_row[0])
+
+
+@router.put("/settings/cloudflare", response_model=CloudflareSettings)
+def update_cloudflare_settings(
+    db: DBDep, modifications: CloudflareSettings, admin: SudoAdminDep
+):
+    """Update Cloudflare/CDN settings"""
+    settings = db.query(Settings).first()
+    settings.cloudflare = modifications.model_dump(mode="json")
+    db.commit()
+    return settings.cloudflare
+
+
+@router.post("/cloudflare/verify-token")
+async def verify_cloudflare_token(db: DBDep, admin: SudoAdminDep):
+    """Verify Cloudflare API token"""
+    cf_settings = get_cloudflare_settings(db, admin)
+
+    if not cf_settings.api_token:
+        raise HTTPException(
+            status_code=400, detail="Cloudflare API token not configured"
+        )
+
+    cf_api = CloudflareAPI(cf_settings.api_token, cf_settings.email)
+    is_valid = await cf_api.verify_token()
+
+    return {"valid": is_valid}
+
+
+@router.get("/cloudflare/zones")
+async def list_cloudflare_zones(db: DBDep, admin: SudoAdminDep):
+    """List all Cloudflare zones (domains)"""
+    cf_settings = get_cloudflare_settings(db, admin)
+
+    if not cf_settings.api_token:
+        raise HTTPException(
+            status_code=400, detail="Cloudflare API token not configured"
+        )
+
+    cf_api = CloudflareAPI(cf_settings.api_token, cf_settings.email)
+    zones = await cf_api.list_zones()
+
+    return {"zones": zones}
+
+
+@router.get("/cloudflare/zones/{zone_id}/dns-records")
+async def list_dns_records(zone_id: str, db: DBDep, admin: SudoAdminDep):
+    """List DNS records for a specific zone"""
+    cf_settings = get_cloudflare_settings(db, admin)
+
+    if not cf_settings.api_token:
+        raise HTTPException(
+            status_code=400, detail="Cloudflare API token not configured"
+        )
+
+    cf_api = CloudflareAPI(cf_settings.api_token, cf_settings.email)
+    records = await cf_api.list_dns_records(zone_id)
+
+    return {"records": records}
+
+
+@router.post("/cloudflare/zones/{zone_id}/dns-records")
+async def create_dns_record(
+    zone_id: str,
+    record_type: str,
+    name: str,
+    content: str,
+    proxied: bool = True,
+    db: DBDep = None,
+    admin: SudoAdminDep = None,
+):
+    """Create a new DNS record"""
+    cf_settings = get_cloudflare_settings(db, admin)
+
+    if not cf_settings.api_token:
+        raise HTTPException(
+            status_code=400, detail="Cloudflare API token not configured"
+        )
+
+    cf_api = CloudflareAPI(cf_settings.api_token, cf_settings.email)
+    record = await cf_api.create_dns_record(
+        zone_id, record_type, name, content, proxied
+    )
+
+    if not record:
+        raise HTTPException(status_code=500, detail="Failed to create DNS record")
+
+    return {"record": record}
+
+
+@router.get("/cdn/optimal-ips", response_model=list[CloudflareIPInfo])
+async def get_optimal_cdn_ips_endpoint(
+    count: int = 10, admin: SudoAdminDep = None
+):
+    """Get optimal CDN IP addresses based on latency testing"""
+    cdn_ips = await get_optimal_cdn_ips(count=count)
+    return cdn_ips
+
+
+@router.get("/cdn/available-ips")
+async def get_available_cdn_ips(admin: SudoAdminDep = None):
+    """Get list of available Cloudflare CDN IP addresses"""
+    cdn_ips = await get_cloudflare_cdn_ips()
+    return {"cdn_ips": cdn_ips}

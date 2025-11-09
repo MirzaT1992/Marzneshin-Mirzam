@@ -112,6 +112,7 @@ def user_subscription(
                 and subscription_settings.placeholder_if_disabled,
                 placeholder_remark=subscription_settings.placeholder_remark,
                 shuffle=subscription_settings.shuffle_configs,
+                include_cdn_configs=True,  # Enable CDN configs
             )
             return Response(
                 content=conf,
@@ -188,6 +189,7 @@ def user_subscription_with_client_type(
         and subscription_settings.placeholder_if_disabled,
         placeholder_remark=subscription_settings.placeholder_remark,
         shuffle=subscription_settings.shuffle_configs,
+        include_cdn_configs=True,  # Enable CDN configs
     )
     return Response(
         content=conf,

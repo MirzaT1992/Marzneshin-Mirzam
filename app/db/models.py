@@ -521,3 +521,4 @@ class Settings(Base):
     subscription = Column(JSON, nullable=False)
     telegram = Column(JSON)
     backup = Column(JSON)
+    cloudflare = Column(JSON)
