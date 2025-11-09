@@ -522,3 +522,4 @@ class Settings(Base):
     telegram = Column(JSON)
     backup = Column(JSON)
     cloudflare = Column(JSON)
+    proxy_mode = Column(JSON)
