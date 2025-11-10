@@ -527,3 +527,4 @@ class Settings(Base):
     backup = Column(JSON)
     cloudflare = Column(JSON)
     proxy_mode = Column(JSON)
+    doh = Column(JSON)  # DNS over HTTPS settings

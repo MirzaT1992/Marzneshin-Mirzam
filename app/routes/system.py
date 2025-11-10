@@ -19,6 +19,7 @@ from app.models.settings import (
     BackupInfo,
     CloudflareSettings,
     CloudflareIPInfo,
+    DoHSettings,
 )
 from app.models.proxy_mode import ProxyModeSettings
 from app.models.system import (
@@ -340,6 +341,89 @@ async def get_available_cdn_ips(admin: SudoAdminDep = None):
     """Get list of available Cloudflare CDN IP addresses"""
     cdn_ips = await get_cloudflare_cdn_ips()
     return {"cdn_ips": cdn_ips}
+
+
+# DNS over HTTPS (DoH) Management Endpoints
+
+@router.get("/settings/doh", response_model=DoHSettings)
+def get_doh_settings(db: DBDep, admin: SudoAdminDep):
+    """Get current DNS over HTTPS settings"""
+    settings_row = db.query(Settings.doh).first()
+    if not settings_row or not settings_row[0]:
+        return DoHSettings()
+    return DoHSettings.model_validate(settings_row[0])
+
+
+@router.put("/settings/doh", response_model=DoHSettings)
+def update_doh_settings(
+    db: DBDep, modifications: DoHSettings, admin: SudoAdminDep
+):
+    """
+    Update DNS over HTTPS settings
+
+    Configure DoH servers for enhanced privacy and security.
+    When enabled, DNS queries will be encrypted over HTTPS.
+
+    **Features:**
+    - Encrypted DNS queries for privacy
+    - CDN-optimized DoH when Cloudflare is enabled
+    - Custom host mappings for domain resolution
+    - Fallback to standard DNS if DoH fails
+    """
+    settings = db.query(Settings).first()
+    settings.doh = modifications.model_dump(mode="json")
+    db.commit()
+    return settings.doh
+
+
+@router.post("/doh/test-server")
+async def test_doh_server(server_url: str, db: DBDep, admin: SudoAdminDep):
+    """
+    Test a DNS over HTTPS server
+
+    **Parameters:**
+    - `server_url`: DoH server URL (e.g., https://cloudflare-dns.com/dns-query)
+
+    **Returns:** Server response time and status
+    """
+    import httpx
+    import time
+
+    # Test query for google.com (A record)
+    dns_query = {
+        "name": "google.com",
+        "type": "A"
+    }
+
+    try:
+        start_time = time.time()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                server_url,
+                params=dns_query,
+                headers={"accept": "application/dns-json"}
+            )
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+
+        if response.status_code == 200:
+            return {
+                "status": "success",
+                "server": server_url,
+                "response_time_ms": round(response_time, 2),
+                "data": response.json()
+            }
+        else:
+            return {
+                "status": "error",
+                "server": server_url,
+                "error": f"HTTP {response.status_code}"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "server": server_url,
+            "error": str(e)
+        }
 
 
 # Smart Proxy Mode Management Endpoints

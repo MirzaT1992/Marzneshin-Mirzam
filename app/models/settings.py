@@ -69,6 +69,27 @@ class BackupInfo(BaseModel):
     is_remote: bool = False
 
 
+class DoHSettings(BaseModel):
+    """DNS over HTTPS (DoH) configuration"""
+    enabled: bool = False
+    servers: list[str] = Field(
+        default_factory=lambda: [
+            "https://cloudflare-dns.com/dns-query",  # Cloudflare DoH
+            "https://dns.google/dns-query",           # Google DoH
+        ],
+        description="List of DoH server URLs (HTTPS DNS endpoints)"
+    )
+    fallback_dns: list[str] = Field(
+        default_factory=lambda: ["1.1.1.1", "8.8.8.8"],
+        description="Fallback DNS servers if DoH fails"
+    )
+    use_cdn_doh: bool = True  # Use CDN-optimized DoH when Cloudflare is enabled
+    custom_hosts: dict[str, str] = Field(
+        default_factory=dict,
+        description="Custom DNS mappings (domain -> IP)"
+    )
+
+
 class CloudflareDomain(BaseModel):
     domain: str
     zone_id: str
@@ -100,3 +121,4 @@ class Settings(BaseModel):
     backup: BackupSettings = Field(default_factory=BackupSettings)
     cloudflare: CloudflareSettings = Field(default_factory=CloudflareSettings)
     proxy_mode: ProxyModeSettings = Field(default_factory=ProxyModeSettings)
+    doh: DoHSettings = Field(default_factory=DoHSettings)

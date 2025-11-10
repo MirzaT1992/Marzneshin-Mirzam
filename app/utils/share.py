@@ -248,6 +248,70 @@ def setup_format_variables(extra_data: dict) -> dict:
     return format_variables
 
 
+def get_doh_dns_servers() -> tuple[list[str], list[str]]:
+    """
+    Get DNS over HTTPS servers from settings.
+
+    Returns:
+        Tuple of (doh_servers, fallback_dns)
+    """
+    from app.db import GetDB
+    from app.db.models import Settings
+    from app.models.settings import DoHSettings
+
+    try:
+        with GetDB() as db:
+            settings_row = db.query(Settings.doh).first()
+            if not settings_row or not settings_row[0]:
+                return [], []
+
+            doh_settings = DoHSettings.model_validate(settings_row[0])
+
+            if not doh_settings.enabled:
+                return [], []
+
+            return doh_settings.servers, doh_settings.fallback_dns
+    except Exception:
+        # If there's any error, return empty lists
+        return [], []
+
+
+def _get_effective_dns_servers(host) -> list[str]:
+    """
+    Determine which DNS servers to use for a host.
+
+    Priority:
+    1. Host-specific DNS servers (if configured)
+    2. DoH servers (if enabled in settings)
+    3. DoH fallback DNS (if DoH enabled but servers empty)
+    4. Empty list (use client default)
+
+    Args:
+        host: InboundHost object
+
+    Returns:
+        List of DNS server addresses (IP or DoH URL)
+    """
+    # Check if host has specific DNS servers configured
+    if host.dns_servers:
+        return host.dns_servers.split(",")
+
+    # Try to get DoH settings
+    doh_servers, fallback_dns = get_doh_dns_servers()
+
+    # If DoH is enabled and has servers, use them
+    if doh_servers:
+        # Combine DoH servers with fallback DNS for redundancy
+        return doh_servers + fallback_dns
+
+    # If DoH enabled but no servers, use fallback DNS only
+    if fallback_dns:
+        return fallback_dns
+
+    # No DNS configured, return empty list (client will use defaults)
+    return []
+
+
 def generate_user_configs(
     inbounds: list,
     key: str,
@@ -388,7 +452,7 @@ def create_config(
             inbound.get("address"), user_id
         ),
         flow=host.flow or inbound.get("flow"),
-        dns_servers=(host.dns_servers.split(",") if host.dns_servers else []),
+        dns_servers=_get_effective_dns_servers(host),
         mtu=host.mtu,
         allowed_ips=(
             list(map(str.strip, host.allowed_ips.split(",")))
