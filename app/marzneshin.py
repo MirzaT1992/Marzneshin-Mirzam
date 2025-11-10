@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -40,6 +41,7 @@ from .tasks import (
 )
 from .tasks.backup import create_auto_backup
 from .webhooks import webhooks_router
+from .telegram.runner import start_telegram_bot, stop_telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,23 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await nodes_startup()
+
+    # Start Telegram bot as background task
+    bot_task = asyncio.create_task(start_telegram_bot())
+    logger.info("Telegram bot task started")
+
     yield
+
+    # Shutdown
     scheduler.shutdown()
+
+    # Stop Telegram bot
+    try:
+        await stop_telegram_bot()
+        bot_task.cancel()
+        logger.info("Telegram bot stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Telegram bot: {e}")
 
 
 app = FastAPI(

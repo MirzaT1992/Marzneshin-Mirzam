@@ -214,6 +214,7 @@ class User(Base):
     note = Column(String(500))
     online_at = Column(DateTime)
     edit_at = Column(DateTime)
+    telegram_id = Column(BigInteger, unique=True, nullable=True)  # Telegram user ID for bot
 
     @property
     def service_ids(self):
