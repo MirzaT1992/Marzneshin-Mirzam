@@ -1,8 +1,10 @@
 import base64
+import copy
 import ipaddress
 import json
 import random
 import secrets
+import logging
 from collections import defaultdict
 from datetime import datetime as dt, timedelta
 from importlib import resources
@@ -248,9 +250,22 @@ def setup_format_variables(extra_data: dict) -> dict:
     return format_variables
 
 
+# DoH settings cache (5 minute TTL)
+_doh_cache = {
+    "data": None,
+    "expires_at": dt.min,
+    "last_error": None
+}
+DOH_CACHE_TTL_MINUTES = 5
+logger = logging.getLogger(__name__)
+
+
 def get_doh_dns_servers() -> tuple[list[str], list[str]]:
     """
-    Get DNS over HTTPS servers from settings.
+    Get DNS over HTTPS servers from settings with caching.
+
+    Cache TTL: 5 minutes
+    Returns cached result if available and not expired.
 
     Returns:
         Tuple of (doh_servers, fallback_dns)
@@ -259,21 +274,41 @@ def get_doh_dns_servers() -> tuple[list[str], list[str]]:
     from app.db.models import Settings
     from app.models.settings import DoHSettings
 
+    now = dt.now()
+
+    # Return cached data if valid
+    if _doh_cache["data"] and _doh_cache["expires_at"] > now:
+        return _doh_cache["data"]
+
     try:
         with GetDB() as db:
             settings_row = db.query(Settings.doh).first()
             if not settings_row or not settings_row[0]:
-                return [], []
+                result = ([], [])
+            else:
+                doh_settings = DoHSettings.model_validate(settings_row[0])
+                if not doh_settings.enabled:
+                    result = ([], [])
+                else:
+                    result = (doh_settings.servers, doh_settings.fallback_dns)
 
-            doh_settings = DoHSettings.model_validate(settings_row[0])
+        # Cache successful result
+        _doh_cache["data"] = result
+        _doh_cache["expires_at"] = now + timedelta(minutes=DOH_CACHE_TTL_MINUTES)
+        _doh_cache["last_error"] = None
+        return result
 
-            if not doh_settings.enabled:
-                return [], []
+    except Exception as e:
+        logger.error(f"Failed to fetch DoH settings: {e}")
 
-            return doh_settings.servers, doh_settings.fallback_dns
-    except Exception:
-        # If there's any error, return empty lists
-        return [], []
+        # Return last successful cache if available (stale cache fallback)
+        if _doh_cache["data"]:
+            logger.warning("Using stale DoH cache due to database error")
+            return _doh_cache["data"]
+
+        # No cache available, return empty
+        _doh_cache["last_error"] = str(e)
+        return ([], [])
 
 
 def _get_effective_dns_servers(host) -> list[str]:
@@ -359,14 +394,13 @@ def _create_host_variant(original_host, host_value: str, remark_suffix: str):
     """
     Create a temporary host variant with modified host and remark.
     Used for generating separate upload/download configs.
+    Uses deep copy to prevent memory leaks from shared references.
     """
-    class HostVariant:
-        def __init__(self, original, new_host, suffix):
-            self.__dict__.update(original.__dict__)
-            self.host = new_host
-            self.remark = original.remark + suffix
-
-    return HostVariant(original_host, host_value, remark_suffix)
+    # Deep copy to avoid memory leaks from shared nested objects
+    variant = copy.deepcopy(original_host)
+    variant.host = host_value
+    variant.remark = original_host.remark + remark_suffix
+    return variant
 
 
 def create_config(

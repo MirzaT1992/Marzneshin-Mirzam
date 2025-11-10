@@ -24,11 +24,33 @@ class UserPanelAuth(BaseModel):
 
 
 class UserPanelAuthResponse(BaseModel):
-    """Authentication response with access token"""
+    """Authentication response with access and refresh tokens"""
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     username: str
-    expires_in: int = 86400  # 24 hours in seconds
+    expires_in: int = 3600  # 1 hour in seconds
+    refresh_expires_in: int = 604800  # 7 days in seconds
+
+
+class UserPanelRefreshRequest(BaseModel):
+    """Request to refresh access token"""
+    refresh_token: str = Field(..., description="Refresh token from authentication")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            }
+        }
+    }
+
+
+class UserPanelRefreshResponse(BaseModel):
+    """Response with new access token"""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = 3600  # 1 hour in seconds
 
 
 class UserPanelInfo(BaseModel):

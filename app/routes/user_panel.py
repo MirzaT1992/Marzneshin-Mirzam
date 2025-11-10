@@ -11,8 +11,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Depends, Header
-from fastapi.responses import Response, HTMLResponse
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
+from fastapi.responses import Response, HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import qrcode
 import jwt
 
@@ -22,6 +23,8 @@ from app.db.models import User
 from app.models.user_panel import (
     UserPanelAuth,
     UserPanelAuthResponse,
+    UserPanelRefreshRequest,
+    UserPanelRefreshResponse,
     UserPanelInfo,
     SubscriptionLinks,
 )
@@ -31,37 +34,82 @@ from app.templates import render_template
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["User Panel"])
 
-# JWT configuration for user panel tokens
-USER_PANEL_TOKEN_EXPIRE_HOURS = 24
-
-
-def create_user_panel_token(username: str, user_key: str) -> str:
+# CSRF Protection: Verify request origin
+def verify_origin(request: Request):
     """
-    Create JWT token for user panel access
+    Verify request origin to prevent CSRF attacks.
+    Checks that the request comes from the same origin.
+    """
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    host = request.headers.get("host")
+
+    # Allow requests without origin (direct API calls, mobile apps)
+    if not origin and not referer:
+        return True
+
+    # Check if origin matches host
+    if origin:
+        # Extract host from origin
+        origin_host = origin.replace("http://", "").replace("https://", "").split("/")[0]
+        if origin_host != host:
+            logger.warning(f"CSRF attempt: Origin {origin_host} != Host {host}")
+            raise HTTPException(
+                status_code=403,
+                detail="Cross-origin request forbidden"
+            )
+
+    return True
+
+# JWT configuration for user panel tokens
+USER_PANEL_ACCESS_TOKEN_EXPIRE_HOURS = 1
+USER_PANEL_REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+
+def create_user_panel_tokens(username: str, user_key: str) -> dict:
+    """
+    Create JWT access and refresh tokens for user panel
 
     Args:
         username: Username
         user_key: User subscription key
 
     Returns:
-        JWT token string
+        Dict with access_token and refresh_token
     """
-    expire = datetime.utcnow() + timedelta(hours=USER_PANEL_TOKEN_EXPIRE_HOURS)
-    payload = {
+    # Access token - short lived (1 hour)
+    access_expire = datetime.utcnow() + timedelta(hours=USER_PANEL_ACCESS_TOKEN_EXPIRE_HOURS)
+    access_payload = {
         "sub": username,
         "key": user_key,
-        "type": "user_panel",
-        "exp": expire,
+        "type": "access",
+        "exp": access_expire,
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
+    access_token = jwt.encode(access_payload, JWT_SECRET_KEY, algorithm="HS256")
+
+    # Refresh token - long lived (7 days)
+    refresh_expire = datetime.utcnow() + timedelta(days=USER_PANEL_REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_payload = {
+        "sub": username,
+        "key": user_key,
+        "type": "refresh",
+        "exp": refresh_expire,
+    }
+    refresh_token = jwt.encode(refresh_payload, JWT_SECRET_KEY, algorithm="HS256")
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
 
 
-def verify_user_panel_token(token: str) -> dict:
+def verify_user_panel_token(token: str, token_type: str = "access") -> dict:
     """
     Verify JWT token and return payload
 
     Args:
         token: JWT token string
+        token_type: Expected token type ("access" or "refresh")
 
     Returns:
         Token payload dict
@@ -71,8 +119,8 @@ def verify_user_panel_token(token: str) -> dict:
     """
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        if payload.get("type") != "user_panel":
-            raise HTTPException(status_code=401, detail="Invalid token type")
+        if payload.get("type") != token_type:
+            raise HTTPException(status_code=401, detail=f"Invalid token type. Expected {token_type}")
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")
@@ -136,9 +184,15 @@ def user_panel_page():
 
 
 @router.post("/api/user-panel/auth", response_model=UserPanelAuthResponse)
-def authenticate_user(auth_request: UserPanelAuth):
+def authenticate_user(
+    auth_request: UserPanelAuth,
+    request: Request,
+    _: bool = Depends(verify_origin)
+):
     """
     Authenticate user with username and subscription key
+
+    **Security:** Protected against CSRF attacks via origin verification
 
     This endpoint allows users to log in to the user panel using their
     username and subscription key (found in their subscription URL).
@@ -152,13 +206,15 @@ def authenticate_user(auth_request: UserPanelAuth):
     ```
 
     **Response:**
-    Returns a JWT access token that should be included in the Authorization
-    header for all subsequent requests:
+    Returns JWT access and refresh tokens. The access token should be included
+    in the Authorization header for all subsequent requests:
     ```
     Authorization: Bearer <access_token>
     ```
 
-    **Token Expiry:** 24 hours
+    **Token Expiry:**
+    - Access token: 1 hour
+    - Refresh token: 7 days (use /refresh endpoint to get new access token)
     """
     with GetDB() as db:
         user = crud.get_user(db, auth_request.username)
@@ -173,17 +229,83 @@ def authenticate_user(auth_request: UserPanelAuth):
         if user.removed:
             raise HTTPException(status_code=401, detail="Account has been removed")
 
-        # Create access token
-        access_token = create_user_panel_token(user.username, user.key)
+        # Create access and refresh tokens
+        tokens = create_user_panel_tokens(user.username, user.key)
 
         logger.info(f"User panel authentication successful for user: {user.username}")
 
         return UserPanelAuthResponse(
-            access_token=access_token,
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
             token_type="bearer",
             username=user.username,
-            expires_in=USER_PANEL_TOKEN_EXPIRE_HOURS * 3600
+            expires_in=USER_PANEL_ACCESS_TOKEN_EXPIRE_HOURS * 3600,
+            refresh_expires_in=USER_PANEL_REFRESH_TOKEN_EXPIRE_DAYS * 86400
         )
+
+
+@router.post("/api/user-panel/refresh", response_model=UserPanelRefreshResponse)
+def refresh_access_token(refresh_request: UserPanelRefreshRequest):
+    """
+    Refresh access token using refresh token
+
+    When the access token expires (after 1 hour), use this endpoint to obtain
+    a new access token without requiring the user to re-enter credentials.
+
+    **Example:**
+    ```json
+    {
+        "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+    ```
+
+    **Response:**
+    Returns a new access token valid for 1 hour.
+
+    **Token Expiry:** Access token: 1 hour
+
+    **Security:**
+    - Refresh tokens are long-lived (7 days)
+    - If refresh token expires, user must re-authenticate
+    - Refresh tokens cannot be used for API access, only for getting new access tokens
+    """
+    # Verify refresh token
+    payload = verify_user_panel_token(refresh_request.refresh_token, token_type="refresh")
+
+    username = payload.get("sub")
+    user_key = payload.get("key")
+
+    # Verify user still exists and credentials are valid
+    with GetDB() as db:
+        user = crud.get_user(db, username)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        # Verify subscription key hasn't changed
+        if user.key != user_key:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Check if user is removed
+        if user.removed:
+            raise HTTPException(status_code=401, detail="Account has been removed")
+
+    # Create new access token
+    access_expire = datetime.utcnow() + timedelta(hours=USER_PANEL_ACCESS_TOKEN_EXPIRE_HOURS)
+    access_payload = {
+        "sub": username,
+        "key": user_key,
+        "type": "access",
+        "exp": access_expire,
+    }
+    new_access_token = jwt.encode(access_payload, JWT_SECRET_KEY, algorithm="HS256")
+
+    logger.info(f"Access token refreshed for user: {username}")
+
+    return UserPanelRefreshResponse(
+        access_token=new_access_token,
+        token_type="bearer",
+        expires_in=USER_PANEL_ACCESS_TOKEN_EXPIRE_HOURS * 3600
+    )
 
 
 @router.get("/api/user-panel/me", response_model=UserPanelInfo)
@@ -311,7 +433,11 @@ def get_qr_code(format: str, user: UserPanelUserDep):
 
 
 @router.post("/api/user-panel/logout")
-def logout(user: UserPanelUserDep):
+def logout(
+    user: UserPanelUserDep,
+    request: Request,
+    _: bool = Depends(verify_origin)
+):
     """
     Logout from user panel
 
@@ -319,6 +445,7 @@ def logout(user: UserPanelUserDep):
     the logout action. The client should discard the token.
 
     **Authentication:** Requires Bearer token
+    **Security:** Protected against CSRF attacks via origin verification
 
     **Client Action:** Delete the stored access token after calling this endpoint.
     """
