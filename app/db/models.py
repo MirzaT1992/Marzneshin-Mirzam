@@ -528,3 +528,27 @@ class Settings(Base):
     cloudflare = Column(JSON)
     proxy_mode = Column(JSON)
     doh = Column(JSON)  # DNS over HTTPS settings
+
+
+class IPBlacklist(Base):
+    """
+    Centralized IP blacklist for fail2ban integration
+
+    This table stores IPs that should be blocked across all nodes.
+    Marznode will periodically sync this list and apply blocks via fail2ban.
+    """
+    __tablename__ = "ip_blacklist"
+
+    id = Column(Integer, primary_key=True)
+    ip_address = Column(String(45), unique=True, nullable=False, index=True)  # IPv4 or IPv6
+    reason = Column(String(256), nullable=True)  # Reason for ban (e.g., "Brute force", "DDoS")
+    banned_by = Column(String(64), nullable=True)  # Admin username who banned
+    banned_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # Null = permanent ban
+    is_active = Column(Boolean, nullable=False, default=True)
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True)  # Null = global ban, set = node-specific
+    node = relationship("Node", foreign_keys=[node_id])
+
+    # Metadata
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
