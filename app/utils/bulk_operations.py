@@ -89,9 +89,13 @@ def perform_bulk_activate(db: Session, usernames: list[str]) -> list[BulkOperati
     """
     results = []
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -144,9 +148,13 @@ def perform_bulk_deactivate(db: Session, usernames: list[str]) -> list[BulkOpera
     """
     results = []
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -198,9 +206,13 @@ def perform_bulk_reset_traffic(db: Session, usernames: list[str]) -> list[BulkOp
     """
     results = []
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -248,9 +260,13 @@ def perform_bulk_reset_days(db: Session, usernames: list[str], days: int) -> lis
     results = []
     new_expire_date = datetime.utcnow() + timedelta(days=days)
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -296,9 +312,13 @@ def perform_bulk_extend_days(db: Session, usernames: list[str], days: int) -> li
     """
     results = []
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -352,9 +372,13 @@ def perform_bulk_add_traffic(db: Session, usernames: list[str], traffic_gb: floa
     results = []
     traffic_bytes = int(traffic_gb * 1024 * 1024 * 1024)
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -408,9 +432,13 @@ def perform_bulk_set_traffic_limit(db: Session, usernames: list[str], traffic_gb
     results = []
     traffic_bytes = int(traffic_gb * 1024 * 1024 * 1024)
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
