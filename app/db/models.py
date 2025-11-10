@@ -348,6 +348,8 @@ class InboundHost(Base):
     path = Column(String(256))
     sni = Column(String(1024))
     host = Column(String(1024))
+    upload_host = Column(String(1024), nullable=True)  # Separate domain for upload traffic
+    download_host = Column(String(1024), nullable=True)  # Separate domain for download traffic
     security = Column(
         Enum(InboundHostSecurity),
         nullable=False,

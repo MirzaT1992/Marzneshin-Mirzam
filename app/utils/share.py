@@ -265,12 +265,44 @@ def generate_user_configs(
         chained_hosts = [c.chained_host for c in host.chain]
         if chained_hosts and not chaining_support:
             continue
-        data = create_config(
-            host, key, format_variables, salt, user_id, chained_hosts
-        )
-        configs.append(data)
+
+        # Check if separate upload/download domains are configured
+        if host.upload_host and host.download_host:
+            # Generate upload-optimized config
+            upload_host = _create_host_variant(host, host.upload_host, " (Upload)")
+            upload_data = create_config(
+                upload_host, key, format_variables, salt, user_id, chained_hosts
+            )
+            configs.append(upload_data)
+
+            # Generate download-optimized config
+            download_host = _create_host_variant(host, host.download_host, " (Download)")
+            download_data = create_config(
+                download_host, key, format_variables, salt, user_id, chained_hosts
+            )
+            configs.append(download_data)
+        else:
+            # Standard config generation
+            data = create_config(
+                host, key, format_variables, salt, user_id, chained_hosts
+            )
+            configs.append(data)
 
     return configs
+
+
+def _create_host_variant(original_host, host_value: str, remark_suffix: str):
+    """
+    Create a temporary host variant with modified host and remark.
+    Used for generating separate upload/download configs.
+    """
+    class HostVariant:
+        def __init__(self, original, new_host, suffix):
+            self.__dict__.update(original.__dict__)
+            self.host = new_host
+            self.remark = original.remark + suffix
+
+    return HostVariant(original_host, host_value, remark_suffix)
 
 
 def create_config(
