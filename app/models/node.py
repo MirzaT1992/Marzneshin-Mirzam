@@ -1,6 +1,7 @@
 from enum import StrEnum, IntEnum
 
 from pydantic import ConfigDict, BaseModel, Field
+from app.models.warp import WarpSettings
 
 
 class BackendConfigFormat(IntEnum):
@@ -93,6 +94,7 @@ class NodeResponse(Node):
     model_config = ConfigDict(from_attributes=True)
     inbound_ids: list[int] | None = None
     backends: list[Backend]
+    warp_config: WarpSettings | None = None
 
 
 class NodeUsageResponse(BaseModel):

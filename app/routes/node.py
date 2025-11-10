@@ -30,6 +30,7 @@ from app.models.node import (
     BackendStats,
 )
 from app.models.system import TrafficUsageSeries
+from app.models.warp import WarpSettings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/nodes", tags=["Node"])
@@ -233,3 +234,45 @@ async def alter_node_xray_config(
             status_code=502, detail="No response from the node."
         )
     return {}
+
+
+@router.get("/{node_id}/warp", response_model=WarpSettings)
+def get_node_warp_config(node_id: int, db: DBDep, admin: SudoAdminDep):
+    """
+    Get WARP configuration for a specific node
+    """
+    db_node = crud.get_node_by_id(db, node_id)
+    if not db_node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    if db_node.warp_config:
+        return WarpSettings.model_validate(db_node.warp_config)
+
+    # Return default WARP settings if not configured
+    return WarpSettings()
+
+
+@router.put("/{node_id}/warp", response_model=WarpSettings)
+def update_node_warp_config(
+    node_id: int,
+    warp_settings: WarpSettings,
+    db: DBDep,
+    admin: SudoAdminDep
+):
+    """
+    Update WARP configuration for a specific node
+
+    Note: This only updates the panel-side configuration.
+    Marznode integration is required for WARP to be operational.
+    """
+    db_node = crud.get_node_by_id(db, node_id)
+    if not db_node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    # Update warp_config in database
+    db_node.warp_config = warp_settings.model_dump()
+    db.commit()
+    db.refresh(db_node)
+
+    logger.info("WARP config updated for node `%s`", db_node.name)
+    return warp_settings
