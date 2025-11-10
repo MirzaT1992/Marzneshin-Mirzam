@@ -32,9 +32,13 @@ def perform_bulk_delete(db: Session, usernames: list[str]) -> list[BulkOperation
     """
     results = []
 
+    # Optimize: Fetch all users in one query
+    users = db.query(User).filter(User.username.in_(usernames)).all()
+    user_dict = {user.username: user for user in users}
+
     for username in usernames:
         try:
-            user = crud.get_user(db, username)
+            user = user_dict.get(username)
             if not user:
                 results.append(BulkOperationResult(
                     username=username,
@@ -43,15 +47,25 @@ def perform_bulk_delete(db: Session, usernames: list[str]) -> list[BulkOperation
                 ))
                 continue
 
-            crud.remove_user(db, user)
-            results.append(BulkOperationResult(
-                username=username,
-                success=True,
-                message="User deleted successfully"
-            ))
-            logger.info(f"Bulk operation: User {username} deleted")
+            # Start nested transaction for this user
+            savepoint = db.begin_nested()
+            try:
+                crud.remove_user(db, user)
+                db.commit()  # Commit this user's transaction
+
+                results.append(BulkOperationResult(
+                    username=username,
+                    success=True,
+                    message="User deleted successfully"
+                ))
+                logger.info(f"Bulk operation: User {username} deleted")
+
+            except Exception as inner_e:
+                savepoint.rollback()  # Rollback only this user
+                raise inner_e
 
         except Exception as e:
+            db.rollback()  # Safety rollback
             logger.error(f"Bulk operation: Failed to delete user {username}: {e}")
             results.append(BulkOperationResult(
                 username=username,

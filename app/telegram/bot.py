@@ -15,8 +15,9 @@ Admin features:
 
 import logging
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
+from collections import defaultdict
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
@@ -33,6 +34,48 @@ from app.utils.share import generate_subscription
 from app.db import crud
 
 logger = logging.getLogger(__name__)
+
+
+# Rate limiting implementation
+_rate_limit_storage = defaultdict(lambda: {"count": 0, "reset_time": datetime.now()})
+RATE_LIMIT_MESSAGES = 5  # messages per window
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def rate_limit(func):
+    """
+    Rate limiting decorator for bot commands.
+    Limits to RATE_LIMIT_MESSAGES per RATE_LIMIT_WINDOW seconds per user.
+    """
+    async def wrapper(message: Message, *args, **kwargs):
+        user_id = message.from_user.id
+        now = datetime.now()
+
+        # Get user's rate limit data
+        user_limit = _rate_limit_storage[user_id]
+
+        # Reset counter if window has passed
+        if now > user_limit["reset_time"]:
+            user_limit["count"] = 0
+            user_limit["reset_time"] = now + timedelta(seconds=RATE_LIMIT_WINDOW)
+
+        # Check if user has exceeded limit
+        if user_limit["count"] >= RATE_LIMIT_MESSAGES:
+            wait_seconds = int((user_limit["reset_time"] - now).total_seconds())
+            await message.answer(
+                f"⏳ <b>Rate limit exceeded!</b>\n\n"
+                f"Please wait {wait_seconds} seconds before trying again.\n"
+                f"This prevents spam and keeps the bot responsive for everyone.",
+                parse_mode="HTML"
+            )
+            logger.warning(f"Rate limit exceeded for user {user_id}")
+            return
+
+        # Increment counter and execute command
+        user_limit["count"] += 1
+        return await func(message, *args, **kwargs)
+
+    return wrapper
 
 
 class LinkAccountState(StatesGroup):
@@ -119,21 +162,27 @@ async def cmd_start(message: Message, state: FSMContext):
         )
 
 
+@rate_limit
 async def cmd_link(message: Message, state: FSMContext):
     """Handle /link command to link Telegram account"""
     telegram_id = message.from_user.id
 
-    # Extract username from command
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    # Extract username and subscription key from command
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
         await message.answer(
-            "❌ Please provide your username:\n"
-            "<code>/link your_username</code>",
+            "❌ <b>Usage:</b>\n"
+            "<code>/link username subscription_key</code>\n\n"
+            "📝 You can find your subscription key in your subscription URL:\n"
+            "<code>https://panel.com/sub/<b>YOUR_KEY</b>/...</code>\n\n"
+            "Example:\n"
+            "<code>/link john abc123def456</code>",
             parse_mode="HTML"
         )
         return
 
     username = args[1].strip()
+    subscription_key = args[2].strip()
 
     with GetDB() as db:
         # Check if already linked
@@ -146,37 +195,48 @@ async def cmd_link(message: Message, state: FSMContext):
             )
             return
 
-        # Find user by username
+        # Authenticate: verify username AND subscription key
         user = crud.get_user(db, username)
-        if not user:
+        if not user or user.key != subscription_key:
             await message.answer(
-                f"❌ User <b>{username}</b> not found.\n\n"
-                f"Please check your username and try again.",
+                "❌ <b>Invalid credentials</b>\n\n"
+                "Please check your username and subscription key.\n"
+                "Make sure you're using the correct key from your subscription URL.",
                 parse_mode="HTML"
             )
+            logger.warning(f"Failed Telegram link attempt for username '{username}' from telegram_id {telegram_id}")
             return
 
         # Check if user already has a telegram_id
         if user.telegram_id:
             await message.answer(
                 f"❌ This account is already linked to another Telegram account.\n\n"
-                f"Please contact an administrator.",
+                f"Please contact an administrator to unlink first.",
                 parse_mode="HTML"
             )
             return
 
         # Link the account
-        user.telegram_id = telegram_id
-        db.commit()
+        try:
+            user.telegram_id = telegram_id
+            db.commit()
 
-        await message.answer(
-            f"✅ Successfully linked!\n\n"
-            f"Your Telegram account is now linked to: <b>{username}</b>\n\n"
-            f"Use the menu below to manage your account.",
-            reply_markup=create_main_keyboard(),
-            parse_mode="HTML"
-        )
-        logger.info(f"Telegram account {telegram_id} linked to user {username}")
+            await message.answer(
+                f"✅ <b>Successfully linked!</b>\n\n"
+                f"Account: <b>{username}</b>\n\n"
+                f"Use the menu below to manage your account.",
+                reply_markup=create_main_keyboard(),
+                parse_mode="HTML"
+            )
+            logger.info(f"Telegram account {telegram_id} successfully linked to user {username}")
+
+        except Exception as e:
+            db.rollback()
+            await message.answer(
+                "❌ An error occurred while linking your account.\n"
+                "Please try again later or contact an administrator."
+            )
+            logger.error(f"Error linking Telegram account: {e}")
 
 
 async def cmd_unlink(message: Message):
@@ -200,6 +260,7 @@ async def cmd_unlink(message: Message):
         logger.info(f"Telegram account {telegram_id} unlinked from user {username}")
 
 
+@rate_limit
 async def cmd_status(message: Message):
     """Handle /status command"""
     telegram_id = message.from_user.id
@@ -213,10 +274,10 @@ async def cmd_status(message: Message):
             )
             return
 
-        # Calculate remaining data
-        if user.data_limit:
+        # Calculate remaining data (safe division)
+        if user.data_limit and user.data_limit > 0:
             used_percentage = (user.used_traffic / user.data_limit) * 100
-            remaining = user.data_limit - user.used_traffic
+            remaining = max(0, user.data_limit - user.used_traffic)
         else:
             used_percentage = 0
             remaining = None
@@ -229,10 +290,14 @@ async def cmd_status(message: Message):
 
         status_text += f"📈 <b>Traffic Usage</b>\n"
         status_text += f"📤 Used: {format_bytes(user.used_traffic)}\n"
-        status_text += f"📊 Limit: {format_bytes(user.data_limit)}\n"
-        if user.data_limit:
+
+        if user.data_limit and user.data_limit > 0:
+            status_text += f"📊 Limit: {format_bytes(user.data_limit)}\n"
             status_text += f"📉 Remaining: {format_bytes(remaining)}\n"
             status_text += f"📈 Usage: {used_percentage:.1f}%\n"
+        else:
+            status_text += f"📊 Limit: ♾️ Unlimited\n"
+
         status_text += f"\n"
 
         status_text += f"⏰ <b>Expiry</b>\n"
@@ -242,6 +307,7 @@ async def cmd_status(message: Message):
         await message.answer(status_text, parse_mode="HTML", reply_markup=create_main_keyboard())
 
 
+@rate_limit
 async def cmd_config(message: Message):
     """Handle /config command"""
     telegram_id = message.from_user.id
@@ -269,7 +335,7 @@ async def cmd_help(message: Message):
         "🤖 <b>Marzneshin Bot Help</b>\n\n"
         "<b>User Commands:</b>\n"
         "/start - Start the bot\n"
-        "/link [username] - Link your Telegram account\n"
+        "/link [username] [subscription_key] - Link your Telegram account\n"
         "/unlink - Unlink your account\n"
         "/status - View your account status\n"
         "/config - Get your subscription link\n"
@@ -290,7 +356,7 @@ async def cmd_stats(message: Message):
     telegram_id = message.from_user.id
 
     # Check if user is admin
-    if TELEGRAM_ADMIN_ID and telegram_id not in TELEGRAM_ADMIN_ID:
+    if not TELEGRAM_ADMIN_ID or telegram_id not in TELEGRAM_ADMIN_ID:
         await message.answer("❌ This command is only available to administrators.")
         return
 
@@ -317,7 +383,7 @@ async def cmd_broadcast(message: Message):
     telegram_id = message.from_user.id
 
     # Check if user is admin
-    if TELEGRAM_ADMIN_ID and telegram_id not in TELEGRAM_ADMIN_ID:
+    if not TELEGRAM_ADMIN_ID or telegram_id not in TELEGRAM_ADMIN_ID:
         await message.answer("❌ This command is only available to administrators.")
         return
 
