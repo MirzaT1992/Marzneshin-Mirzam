@@ -97,19 +97,17 @@ Deployment and Developer Kit:
 - Kurdish (Soranî, Kurmancî)
 - Persian (WIP)
 
-# Installation guide
+# Installation guide all dayabase
 
 Run the following command
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/khodedawsh/Marzneshin/raw/master/script.sh)" @ install
+bash <(curl -Ls https://raw.githubusercontent.com/MirzaT1992/Marzneshin-Mirzam/EryX0-master/install.sh)
 ```
 
 To install with mariadb:
 
-```bash
-sudo bash -c "$(curl -sL https://github.com/khodedawsh/Marzneshin/raw/master/script.sh)" @ install --database mariadb
-```
+
 
 You could also use mysql by writing mysql instead, however mariadb is **recommended**.
 Also to install the latest nightly release use the `--nightly` option.
