@@ -1,4 +1,4 @@
-<h1 align="center"/>Marzneshin</h1>
+<h1 align="center"/>Mirzam:Marzneshin</h1>
 
 <p align="center">
     A Scalable and Comprehensive Proxy Engine management panel.
